@@ -1,3 +1,5 @@
+<p align="center"><img src="build/icon.png" alt="icon" width="128"></p>
+
 # Desktop Pet To-Do
 
 **English** | [简体中文](README.zh-CN.md)
@@ -74,4 +76,4 @@ build/           Installer script (auto-start) and icon.png
 
 ## License
 
-Add a license of your choice (e.g. MIT) before publishing.
+Not specified yet.
