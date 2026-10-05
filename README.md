@@ -1,6 +1,6 @@
 <p align="center"><img src="build/icon.png" alt="icon" width="128"></p>
 
-# Desktop Pet To-Do
+# Minimal Desktop Pet
 
 **English** | [简体中文](README.zh-CN.md)
 

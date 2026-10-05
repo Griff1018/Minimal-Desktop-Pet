@@ -1,6 +1,6 @@
 <p align="center"><img src="build/icon.png" alt="icon" width="128"></p>
 
-# 桌宠待办
+# 轻量化桌宠
 
 [English](README.md) | **简体中文**
 

@@ -321,7 +321,7 @@ function makeTrayIcon() {
 
 function createTray() {
   tray = new Tray(makeTrayIcon());
-  tray.setToolTip('桌宠待办');
+  tray.setToolTip('Minimal Desktop Pet 轻量化桌宠');
   const menu = Menu.buildFromTemplate([
     { label: '待办管理', click: openManager },
     { label: '显示 / 隐藏宠物', click: togglePet },
