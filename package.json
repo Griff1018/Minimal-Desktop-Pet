@@ -1,0 +1,12 @@
+{
+  "name": "desktop-pet-todo",
+  "version": "1.0.0",
+  "description": "桌宠待办事项",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.5.1"
+  }
+}

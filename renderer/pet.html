@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>桌宠</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
+    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; }
+  /* 窗口纵向 = 宠物 + 一侧的气泡区（高度 --zone 由主进程给出；气泡翻到另一侧时窗口换边，data-side 标记当前侧） */
+  #stage { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; }
+  #stage[data-side="above"] #zoneBottom, #stage[data-side="below"] #zoneTop { display: none; }
+  .zone { height: var(--zone, 560px); flex: none; width: 100%; display: flex; justify-content: center; }
+  #zoneTop { align-items: flex-end; }
+  #zoneBottom { align-items: flex-start; }
+
+  #bubble { position: relative; z-index: 5; width: var(--bubble-w, 330px); max-width: calc(100% - 80px); box-sizing: border-box;
+    margin: 0 0 14px; padding: 10px 12px; background: var(--b-bg); border: var(--b-bw) solid var(--b-border); border-radius: var(--b-radius);
+    color: var(--b-fg); font: 13px/1.45 var(--b-font); box-shadow: var(--b-shadow); }
+  #bubble.below { margin: 14px 0 0; }
+  #bubble.hidden { display: none; }
+  #bubbleBody { max-height: calc(min(var(--bubble-h-eff, var(--bubble-h, 380px)), var(--zone, 560px) - 30px) - 24px); overflow-y: auto; }
+  #bubbleBody::-webkit-scrollbar { width: 8px; }
+  #bubbleBody::-webkit-scrollbar-thumb { background: var(--b-line); border-radius: 4px; }
+  /* 小尾巴 */
+  #bubble::after { content: ""; position: absolute; left: var(--tail-x, 50%); bottom: -9px; width: 14px; height: 14px; margin-left: -7px;
+    background: var(--b-bg); border-right: var(--b-bw) solid var(--b-border); border-bottom: var(--b-bw) solid var(--b-border); transform: rotate(45deg); }
+  #bubble.below::after { bottom: auto; top: -9px; border: none; border-left: var(--b-bw) solid var(--b-border); border-top: var(--b-bw) solid var(--b-border); }
+  /* 亮色主题的十字标记（暗色下不显示） */
+  #bubble::before { content: "+"; display: var(--deco, none); position: absolute; top: -12px; left: 14px; color: var(--b-accent);
+    font: 700 16px/1 var(--b-font); }
+  #bubble.below::before { top: auto; bottom: -12px; }
+
+  /* 按钮统一样式：圆形，hover 时出现；贴近宠物/对话框的一侧留 6px 透明区，鼠标移过去时不会丢失 hover */
+  .grip { position: absolute; box-sizing: content-box; width: 24px; height: 24px; border-radius: 50%; color: var(--g-fg);
+    background: var(--g-bg); background-clip: content-box; font-size: 14px; line-height: 24px; text-align: center;
+    opacity: 0; transition: opacity .15s; z-index: 2; cursor: pointer; }
+  .grip[data-c="br"], .grip[data-c="tl"] { cursor: nwse-resize; }
+  .grip[data-c="bl"], .grip[data-c="tr"] { cursor: nesw-resize; }
+  /* 宠物缩放把手：在宠物外侧，不压在角色上 */
+  #grip { width: 24px; border: 0 solid transparent; }
+  #grip[data-c="br"], #grip[data-c="tr"] { left: 100%; border-left-width: 6px; }
+  #grip[data-c="bl"], #grip[data-c="tl"] { right: 100%; border-right-width: 6px; }
+  #grip[data-c="br"], #grip[data-c="bl"] { bottom: 0; }
+  #grip[data-c="tr"], #grip[data-c="tl"] { top: 0; }
+  #petWrap:hover #grip, #petWrap.resizing #grip { opacity: 1; }
+  #bgrip { cursor: nwse-resize; }
+  #bubble:hover .grip, #bubble.resizing #bgrip, #bubble.moving .grip { opacity: 1; }
+  /* 对话框侧边按钮：移动 + 上下切换 + 缩放 */
+  #bside { position: absolute; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; }
+  #bside[data-s="r"] { left: 100%; padding-left: 6px; }
+  #bside[data-s="l"] { right: 100%; padding-right: 6px; }
+  #bside .grip { position: static; }
+  #bmove { cursor: move; }
+  #bcal.on { background: var(--b-accent); color: var(--b-accent-fg); opacity: 1; }
+
+  /* 对话框里的迷你日历 */
+  .bcal-head { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; font-weight: 700; }
+  .bcal-head .ttl { flex: 1; text-align: center; }
+  .bcal-nav { cursor: pointer; padding: 0 8px; border: 1px solid var(--b-line); border-radius: var(--b-radius); user-select: none; }
+  .bcal-nav:hover { background: var(--b-tint); }
+  .bcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .bcal-w { text-align: center; font-size: 10px; color: var(--b-sub); padding-bottom: 2px; }
+  .bcal-d { position: relative; text-align: center; font-size: 11px; padding: 3px 0 8px; border-radius: var(--b-radius); cursor: pointer;
+    border: 1px solid transparent; }
+  .bcal-d:hover { background: var(--b-tint); }
+  .bcal-d.other { opacity: .35; }
+  .bcal-d.today { background: var(--b-accent); color: var(--b-accent-fg); font-weight: 700; }
+  .bcal-d.sel { border-color: var(--b-accent); }
+  .bcal-d .dot { position: absolute; left: 50%; bottom: 2px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; }
+  .bcal-d .dot.p3 { background: var(--b-p3); } .bcal-d .dot.p2 { background: var(--b-p2); } .bcal-d .dot.p1 { background: var(--b-p1); }
+  .bcal-d.today .dot { box-shadow: 0 0 0 1.5px var(--b-accent-fg); }
+  .bcal-sec { margin: 8px 0 2px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+  .bcal-sec .cnt { font-weight: 400; color: var(--b-sub); font-size: 11px; }
+  /* 另一侧空间太小、拒绝切换时按钮抖一下并变红 */
+  #bflip.deny { animation: deny .35s; }
+  @keyframes deny { 0%, 100% { background: var(--g-bg); } 25% { transform: translateX(-4px); background: #e5484d; } 75% { transform: translateX(4px); background: #e5484d; } }
+
+  /* 打气 / 提醒小对话框：半透明，在宠物左右两侧，自动躲开屏幕边缘和任务对话框 */
+  #cheer { position: fixed; z-index: 4; box-sizing: border-box; max-width: 210px; padding: 8px 12px; border-radius: var(--b-radius);
+    border: var(--b-bw) solid var(--b-border); background: color-mix(in srgb, var(--b-bg) 78%, transparent); color: var(--b-fg);
+    font: 12.5px/1.55 var(--b-font); box-shadow: var(--b-shadow); pointer-events: none; animation: cheerIn .3s ease-out; }
+  #cheer.hidden { display: none; }
+  #cheer.reminder { pointer-events: auto; cursor: pointer; background: color-mix(in srgb, var(--b-bg) 90%, transparent); border-color: var(--b-accent); }
+  #cheer .ico { font-size: 18px; margin-right: 6px; vertical-align: -2px; }
+  #cheer::after { content: ""; position: absolute; top: calc(50% - 6px); width: 12px; height: 12px; background: inherit;
+    transform: rotate(45deg); border: inherit; }
+  #cheer.at-right::after { left: -7px; border-right: none; border-top: none; }
+  #cheer.at-left::after { right: -7px; border-left: none; border-bottom: none; }
+  @keyframes cheerIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* 常驻提示：和任务对话框在同一位置（宠物上方 / 下方），半透明但文字要看得清，不挡鼠标 */
+  #hint { position: relative; z-index: 3; flex: none; box-sizing: border-box; margin: 0 0 14px; padding: 5px 14px; border-radius: 999px;
+    white-space: nowrap; font: 12.5px/1.5 var(--b-font); color: var(--b-fg); pointer-events: none;
+    background: color-mix(in srgb, var(--b-bg) 85%, transparent); border: 1px solid color-mix(in srgb, var(--b-border) 55%, transparent); }
+  #hint.below { margin: 14px 0 0; }
+  #hint.hidden { display: none; }
+
+  #petWrap { position: relative; flex: none; height: var(--pet-h, 220px); display: flex; align-items: flex-end; justify-content: center; cursor: grab; }
+  #petWrap.dragging { cursor: grabbing; }
+  #sprite { height: 100%; width: auto; max-width: calc(var(--pet-h, 220px) * 1.2); object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+  #emoji { font-size: calc(var(--pet-h, 220px) * 0.7); line-height: 1; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage" data-side="above">
+  <div id="zoneTop" class="zone">
+    <div id="hint" class="hidden">还有工作没完成哟~</div>
+    <div id="bubble" class="hidden">
+      <div id="bubbleBody"></div>
+      <div id="bside" data-s="r">
+        <div id="bmove" class="grip" title="按住拖动对话框（只能在宠物同一侧移动）">✥</div>
+        <div id="bflip" class="grip" title="对话框移到上方 / 下方（空间不够会自动压矮，太小则无法切换）">⇅</div>
+        <div id="bcal" class="grip" title="展示日历 / 今天待办">📅</div>
+        <div id="bgrip" class="grip" title="按住拖动调整对话框大小（远离宠物方向 = 放大）">⤡</div>
+      </div>
+    </div>
+  </div>
+  <div id="petWrap">
+    <img id="sprite" alt="" hidden><div id="emoji"></div>
+    <div id="grip" class="grip" data-c="br" title="按住拖动缩放（也可在宠物上滚动滚轮）">⤡</div>
+  </div>
+  <div id="zoneBottom" class="zone"></div>
+</div>
+<div id="cheer" class="hidden"></div>
+<script src="detail.js"></script>
+<script src="course.js"></script>
+<script src="pet.js"></script>
+</body>
+</html>

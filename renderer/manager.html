@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>待办管理</title>
+<style>
+  :root { --bg: #f5f6fa; --card: #fff; --line: #e1e4ec; --text: #22242e; --sub: #6b7080; --accent: #4f6ef7; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px "Microsoft YaHei UI", "Segoe UI", sans-serif; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  textarea, input, select { width: 100%; font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: inherit; }
+  textarea { resize: vertical; min-height: 60px; }
+  .row { display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 120px; }
+  .row > .fixed { flex: none; min-width: 0; }
+  button { font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: #fff; cursor: pointer; color: inherit; }
+  button:hover { background: #eef0f7; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: #3f5be0; }
+  button.danger { background: #e5484d; border-color: #e5484d; color: #fff; }
+  button.danger:hover { background: #c93338; border-color: #c93338; }
+  .dt { display: flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 0 6px 0 2px; min-width: 240px; }
+  .dt input[type=date] { border: none; padding: 7px 4px; width: auto; flex: 1; background: transparent; }
+  .dt input[type=date]:focus { outline: none; }
+  .tf { min-width: 24px; text-align: center; padding: 4px 4px; border-radius: 5px; cursor: ns-resize; font-variant-numeric: tabular-nums; }
+  .tf:focus { background: #dbe4ff; outline: none; }
+  .tf.dim { opacity: .45; }
+  .dt .colon { opacity: .6; }
+  .dt .x { border: none; background: none; padding: 0 6px; font-size: 16px; line-height: 1; color: var(--sub); }
+  .dt .x:hover { color: #e5484d; background: none; }
+  .ttl { font-weight: 600; }
+  .sub { color: var(--sub); font-size: 13px; margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+  .hint { color: var(--sub); font-size: 12px; margin-top: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: #eef2ff; color: #3451b2; border-radius: 12px; padding: 2px 4px 2px 10px; font-size: 12px; max-width: 100%; }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; cursor: pointer; }
+  .chip b { cursor: pointer; padding: 0 6px; color: #667; }
+  .imgchip { position: relative; }
+  .imgchip img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); cursor: pointer; display: block; }
+  .imgchip b { position: absolute; top: -6px; right: -6px; background: #fff; border: 1px solid var(--line); border-radius: 50%; width: 18px; height: 18px;
+    line-height: 16px; text-align: center; font-size: 12px; cursor: pointer; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; align-items: center; }
+  .tab, .vtab { padding: 5px 14px; border-radius: 16px; cursor: pointer; border: 1px solid var(--line); background: #fff; }
+  .tab.on, .vtab.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .vtabs { margin-bottom: 12px; }
+  .tabs .spacer { flex: 1; }
+  .task { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .task:first-child { border-top: none; }
+  .bar { width: 5px; border-radius: 3px; flex: none; }
+  .p3 .bar { background: #e5484d; } .p2 .bar { background: #f5a524; } .p1 .bar { background: #46a758; }
+  .body { flex: 1; min-width: 0; }
+  .text { white-space: pre-wrap; word-break: break-word; }
+  .done .text { text-decoration: line-through; color: var(--sub); }
+  .meta { font-size: 12px; color: var(--sub); margin-top: 2px; }
+  .meta.over { color: #d33; font-weight: 700; }
+  .acts { display: flex; flex-direction: column; gap: 4px; }
+  .acts button { padding: 3px 10px; font-size: 12px; }
+  /* ---------- 日历视图 ---------- */
+  .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .cal-head .spacer { flex: 1; }
+  .cal-head button { padding: 4px 12px; }
+  .cal-title { font-weight: 600; min-width: 110px; text-align: center; }
+  .cal-opt { font-size: 12px; color: var(--sub); display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .cal-opt input { width: auto; }
+  .cal-week, .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+  .cal-week div { text-align: center; color: var(--sub); font-size: 12px; padding: 2px 0; }
+  .cal-cell { min-height: 88px; border: 1px solid var(--line); border-radius: 8px; padding: 4px; background: #fff; cursor: pointer;
+    overflow: hidden; display: flex; flex-direction: column; gap: 2px; }
+  .cal-cell:hover { border-color: var(--accent); }
+  .cal-cell.other { background: #f5f6fa; opacity: .6; }
+  .cal-cell.today .dn { background: var(--accent); color: #fff; border-radius: 10px; padding: 0 7px; }
+  .cal-cell.sel { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .cal-cell.dragover { background: #e8edff; }
+  .cal-cell .dn { font-size: 12px; font-weight: 600; align-self: flex-start; }
+  .cal-cell.hasover .dn::after { content: "●"; color: #e5484d; font-size: 8px; margin-left: 4px; vertical-align: 2px; }
+  .cchip { font-size: 11px; line-height: 1.4; border-left: 3px solid; padding: 1px 4px; border-radius: 3px; background: #f1f3fa;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; }
+  .cchip.p3 { border-color: #e5484d; } .cchip.p2 { border-color: #f5a524; } .cchip.p1 { border-color: #46a758; }
+  .cchip.done { text-decoration: line-through; opacity: .55; }
+  .cal-cell .more { font-size: 11px; color: var(--sub); }
+  .day-panel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .day-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .day-title { font-weight: 600; flex: 1; }
+  /* ---------- 课程表 ---------- */
+  .tt-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tt-bar .spacer { flex: 1; }
+  .tt-form { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 14px; background: #fafbff; }
+  .tt-form h2 { margin-top: 0; }
+  .tt-field { margin-top: 8px; flex: 1; min-width: 100px; }
+  .tt-field .lbl { display: block; font-size: 12px; color: var(--sub); margin-bottom: 3px; }
+  .days { display: flex; gap: 6px; flex-wrap: wrap; }
+  .days label { display: flex; align-items: center; gap: 3px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 14px; cursor: pointer; background: #fff; }
+  .days input { width: auto; }
+  .seg { display: flex; }
+  .seg button { flex: 1; border-radius: 0; }
+  .seg button:first-child { border-radius: 8px 0 0 8px; }
+  .seg button:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+  .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tt-grid { display: grid; grid-template-columns: 40px repeat(7, minmax(0, 1fr)); column-gap: 2px; margin-bottom: 4px; }
+  .tt-dh { text-align: center; font-size: 12px; color: var(--sub); padding: 4px 0; }
+  .tt-dh.today { color: var(--accent); font-weight: 700; }
+  .tt-axis { position: relative; }
+  .tt-hl { position: absolute; left: 0; font-size: 10px; color: var(--sub); transform: translateY(-6px); }
+  .tt-col { position: relative; border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent var(--hh)); }
+  .tt-col.today { background-color: #f3f6ff; }
+  .tt-block { position: absolute; box-sizing: border-box; border-left: 3px solid; border-radius: 4px; padding: 2px 4px; overflow: hidden; cursor: pointer; font-size: 11px; line-height: 1.3; }
+  .tt-block:hover { filter: brightness(.96); box-shadow: 0 1px 4px rgba(0,0,0,.2); z-index: 2; }
+  .tt-block .b-name { font-weight: 700; }
+  .tt-block .b-sub { color: #555; font-size: 10px; word-break: break-all; }
+  .mode { font-size: 10px; padding: 0 6px; border-radius: 8px; vertical-align: 1px; font-weight: 400; }
+  .mode.offline { background: #e6f4ea; color: #1d7a3a; }
+  .mode.online { background: #e3ebff; color: #2f4fd1; }
+  .course-card { display: flex; gap: 10px; align-items: flex-start; padding: 6px 10px; margin-top: 6px; border-left: 4px solid; border-radius: 6px; cursor: pointer; }
+  .course-card:hover { filter: brightness(.97); }
+  .cc-time { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  .cc-name { font-weight: 600; }
+  .cc-info { font-size: 12px; color: var(--sub); margin-top: 1px; word-break: break-all; }
+  .day-sub { font-size: 12px; color: var(--sub); margin: 10px 0 2px; letter-spacing: .04em; }
+  .cl-row, .im-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
+  .cl-row:first-child, .im-row:first-child { border-top: none; }
+  .cl-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 5px; }
+  .cl-main { flex: 1; min-width: 0; }
+  .cl-meta { font-size: 12px; color: var(--sub); margin-top: 2px; word-break: break-all; }
+  .cl-note { font-size: 12px; color: #b26a00; margin-top: 2px; }
+  .im-row { cursor: pointer; }
+  .im-row.dup { opacity: .6; }
+  .im-row input { width: auto; margin-top: 4px; }
+  .flag { font-size: 10px; background: #fff1d6; color: #b26a00; border-radius: 8px; padding: 0 6px; }
+  .modal { position: fixed; inset: 0; background: rgba(20,24,40,.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+  .modal[hidden] { display: none; }
+  .modal-box { background: #fff; border-radius: 12px; width: 100%; max-width: 620px; max-height: 90vh; display: flex; flex-direction: column; padding: 14px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 15px; }
+  .im-opts { display: flex; flex-direction: column; gap: 6px; font-size: 13px; margin: 8px 0; }
+  .im-opts label { display: flex; align-items: center; gap: 6px; }
+  .im-opts input[type=checkbox] { width: auto; }
+  .im-tools { display: flex; gap: 6px; margin-bottom: 4px; }
+  .im-tools button { padding: 3px 10px; font-size: 12px; }
+  .im-list { overflow-y: auto; flex: 1; min-height: 120px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; }
+  .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+  .modal-foot button:disabled { opacity: .5; cursor: not-allowed; }
+  .empty { color: var(--sub); text-align: center; padding: 18px 0; }
+  .drop-on { outline: 3px dashed var(--accent); outline-offset: -6px; }
+  details summary { cursor: pointer; font-weight: 700; }
+  .set-grid { display: grid; grid-template-columns: 1fr 170px; gap: 8px; align-items: center; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="formCard">
+    <h2 id="formTitle">添加待办</h2>
+    <input id="title" placeholder="标题（必填）" maxlength="120">
+    <textarea id="text" placeholder="内容（可选，Ctrl+Enter 提交）" style="margin-top:8px"></textarea>
+    <div class="row">
+      <select id="priority">
+        <option value="3">🔴 高优先级</option>
+        <option value="2" selected>🟡 中优先级</option>
+        <option value="1">🟢 低优先级</option>
+      </select>
+      <div class="dt" title="截止时间（可选）：日期点开选日历；时、分用滚轮 / ↑↓ / 直接输入数字">
+        <input id="dueDate" type="date">
+        <span class="tf dim" id="dueH" tabindex="0">18</span><span class="colon">:</span><span class="tf dim" id="dueM" tabindex="0">00</span>
+        <button id="dueClear" class="x" title="清除截止时间" tabindex="-1">×</button>
+      </div>
+    </div>
+    <div class="row">
+      <button id="btnFile" class="fixed">📎 添加文件</button>
+      <button id="btnImg" class="fixed">🖼 添加图片</button>
+      <input id="linkInput" placeholder="粘贴网址或文件路径，回车添加">
+    </div>
+    <div class="chips" id="draftChips"></div>
+    <div class="hint">可直接把文件 / 图片拖进窗口，或用 Ctrl+V 粘贴截图。</div>
+    <div class="row">
+      <button id="btnSubmit" class="primary">添加</button>
+      <button id="btnCancel" class="fixed" hidden>取消编辑</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="tabs vtabs">
+      <div class="vtab on" data-view="list">☰ 列表</div>
+      <div class="vtab" data-view="cal">📅 日历</div>
+      <div class="vtab" data-view="tt">🎓 课程表</div>
+    </div>
+
+    <div id="listView">
+      <div class="tabs">
+        <div class="tab on" data-tab="pending">待办</div>
+        <div class="tab" data-tab="done">已完成</div>
+        <div class="spacer"></div>
+        <button id="btnClear" hidden class="danger">清空已完成</button>
+      </div>
+      <div id="list"></div>
+    </div>
+
+    <div id="calView" hidden>
+      <div class="cal-head">
+        <button id="calPrev" title="上个月">‹</button>
+        <div class="cal-title" id="calTitle"></div>
+        <button id="calNext" title="下个月">›</button>
+        <button id="calToday">今天</button>
+        <div class="spacer"></div>
+        <label class="cal-opt"><input type="checkbox" id="calShowCourses" checked> 显示课程</label>
+        <label class="cal-opt"><input type="checkbox" id="calShowDone"> 显示已完成</label>
+      </div>
+      <div class="cal-week"><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div></div>
+      <div class="cal-grid" id="calGrid"></div>
+      <div class="hint">点日期查看当天事项；把事项条拖到别的日期可改截止日。</div>
+      <div class="day-panel" id="dayPanel"></div>
+      <div class="day-panel" id="noDue"></div>
+    </div>
+
+    <div id="ttView" hidden>
+      <div class="tt-bar">
+        <button id="ttAdd" class="primary">＋ 添加课程</button>
+        <button id="ttImport">📥 导入 .ics</button>
+        <span id="ttStatus" class="hint" style="margin:0"></span>
+        <div class="spacer"></div>
+        <button id="ttClear" class="danger" hidden>清空课程表</button>
+      </div>
+
+      <div id="ttForm" class="tt-form" hidden>
+        <h2 id="ttFormTitle">添加课程</h2>
+        <div class="row">
+          <input id="cName" placeholder="课程名称（必填）" maxlength="100">
+          <input id="cTeacher" placeholder="老师" maxlength="60">
+        </div>
+        <div class="tt-field">
+          <span class="lbl">上课星期（可多选，每个星期会各建一条）</span>
+          <div class="days">
+            <label><input type="checkbox" class="cday" value="1">一</label><label><input type="checkbox" class="cday" value="2">二</label><label><input type="checkbox" class="cday" value="3">三</label><label><input type="checkbox" class="cday" value="4">四</label><label><input type="checkbox" class="cday" value="5">五</label><label><input type="checkbox" class="cday" value="6">六</label><label><input type="checkbox" class="cday" value="7">日</label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="tt-field"><span class="lbl">开始（24 小时制）</span><input id="cStart" placeholder="09:00" maxlength="5" inputmode="numeric"></div>
+          <div class="tt-field"><span class="lbl">结束（24 小时制）</span><input id="cEnd" placeholder="10:30" maxlength="5" inputmode="numeric"></div>
+          <div class="tt-field"><span class="lbl">上课方式</span>
+            <div class="seg"><button type="button" id="cModeOffline" class="on">线下</button><button type="button" id="cModeOnline">线上</button></div>
+          </div>
+        </div>
+        <div class="tt-field"><span class="lbl" id="cPlaceLabel">教室 / 地点</span><input id="cPlace" placeholder="例如：B3-201" maxlength="300"></div>
+        <div class="row">
+          <div class="tt-field"><span class="lbl">学期开始（可空）</span><input id="cFrom" type="date"></div>
+          <div class="tt-field"><span class="lbl">学期结束（可空）</span><input id="cUntil" type="date"></div>
+          <div class="tt-field"><span class="lbl">频率</span>
+            <select id="cInterval"><option value="1">每周</option><option value="2">每两周</option><option value="3">每三周</option><option value="4">每四周</option></select>
+          </div>
+        </div>
+        <div class="row">
+          <button id="ttSave" class="primary">添加</button>
+          <button id="ttCancel" class="fixed">取消</button>
+        </div>
+      </div>
+
+      <div class="cal-head">
+        <button id="ttPrev" title="上一周">‹</button>
+        <div class="cal-title" id="ttWeekTitle"></div>
+        <button id="ttNext" title="下一周">›</button>
+        <button id="ttThisWeek">本周</button>
+      </div>
+      <div id="ttEmpty" class="empty" hidden>还没有课程。点「＋ 添加课程」手动添加，或「📥 导入 .ics」从学校课表导入（也可以把 .ics 文件直接拖进窗口）。</div>
+      <div class="tt-grid" id="ttGrid"></div>
+
+      <div class="day-panel">
+        <div class="day-head"><div class="day-title">全部课程 · <span id="ttCount">0</span> 条</div></div>
+        <div id="ttList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="importModal" hidden>
+    <div class="modal-box">
+      <div class="modal-head"><b id="imTitle">导入预览</b><button id="imClose" class="x" style="border:none;background:none;font-size:20px">×</button></div>
+      <div id="imSummary" class="hint" style="margin-top:0"></div>
+      <div class="im-opts">
+        <label><input type="checkbox" id="imReplace"> 导入前先清除之前导入的课程（用于更新课表）</label>
+        <label>没有结束日期的课程统一结束于 <input id="imUntil" type="date" style="width:auto"></label>
+      </div>
+      <div class="im-tools"><button id="imAll">全选</button><button id="imNone">全不选</button></div>
+      <div id="imList" class="im-list"></div>
+      <details id="imSkippedBox" hidden><summary id="imSkippedSum" style="cursor:pointer;color:var(--sub);font-size:13px"></summary><div id="imSkipped"></div></details>
+      <div class="modal-foot"><button id="imCancel">取消</button><button id="imGo" class="primary">导入所选</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>设置</summary>
+      <div class="set-grid">
+        <label for="s_bubbleSeconds">气泡自动消失（秒，0 = 不消失）</label><input id="s_bubbleSeconds" type="number" min="0">
+        <label for="s_cheerEnabled">任务列表旁的打气小对话框</label>
+        <select id="s_cheerEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
+        <label for="s_cheerSeconds">打气话停留时间（秒，0 = 跟随任务对话框）</label><input id="s_cheerSeconds" type="number" min="0" max="600">
+        <label for="s_reminderSeconds">提醒停留时间（秒，0 = 点击才消失）</label><input id="s_reminderSeconds" type="number" min="0" max="600">
+        <label for="s_eyeMinutes">👀 护眼提醒间隔（分钟，0 = 关闭）</label><input id="s_eyeMinutes" type="number" min="0" max="600">
+        <label for="s_waterMinutes">💧 喝水提醒间隔（分钟，0 = 关闭）</label><input id="s_waterMinutes" type="number" min="0" max="600">
+        <label for="s_moveMinutes">🚶 起来走动提醒间隔（分钟，0 = 关闭）</label><input id="s_moveMinutes" type="number" min="0" max="600">
+        <label for="s_bubbleTheme">对话框主题</label>
+        <select id="s_bubbleTheme"><option value="light">亮色（蓝色线稿风）</option><option value="dark">暗色（VS Code）</option></select>
+        <label for="s_bubblePos">对话框位置（放不下时自动换到另一侧）</label>
+        <select id="s_bubblePos"><option value="above">优先在宠物上方</option><option value="below">优先在宠物下方</option></select>
+        <label for="s_bubbleWidth">对话框宽度（200–370，也可直接拖对话框角上的按钮）</label><input id="s_bubbleWidth" type="number" min="200" max="370">
+        <label for="s_bubbleHeight">对话框最大高度（120–480，事项多时自动撑高到此上限，再多就滚动）</label><input id="s_bubbleHeight" type="number" min="120" max="480">
+        <label for="s_petHeight">宠物显示高度（像素）</label><input id="s_petHeight" type="number" min="80" max="600">
+      </div>
+    </details>
+  </div>
+</div>
+<script src="detail.js"></script>
+<script src="course.js"></script>
+<script src="ics.js"></script>
+<script src="manager.js"></script>
+<script src="timetable.js"></script>
+</body>
+</html>
