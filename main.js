@@ -10,9 +10,11 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
-const DATA_DIR = path.join(__dirname, 'data');
+// 打包后程序目录是只读的：数据和角色素材放到用户数据目录（%APPDATA%\desktop-pet-todo），首次运行时复制自带素材
+const USER_ROOT = app.isPackaged ? app.getPath('userData') : __dirname;
+const DATA_DIR = path.join(USER_ROOT, 'data');
 const IMG_DIR = path.join(DATA_DIR, 'images');
-const PET_DIR = path.join(__dirname, 'assets', 'pet');
+const PET_DIR = app.isPackaged ? path.join(USER_ROOT, 'pet') : path.join(__dirname, 'assets', 'pet');
 const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
 const COURSES_FILE = path.join(DATA_DIR, 'courses.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -28,6 +30,12 @@ const STATES = ['idle', 'talk', 'urgent', 'happy', 'sleep', 'drag'];
 
 fs.mkdirSync(IMG_DIR, { recursive: true });
 fs.mkdirSync(PET_DIR, { recursive: true });
+if (app.isPackaged) {
+  try {
+    const bundled = path.join(process.resourcesPath, 'pet');
+    if (fs.readdirSync(PET_DIR).length === 0 && fs.existsSync(bundled)) fs.cpSync(bundled, PET_DIR, { recursive: true });
+  } catch {}
+}
 
 // ---------- 数据 ----------
 function readJson(file, fallback) {
@@ -42,9 +50,11 @@ function writeJson(file, data) {
 }
 
 let tasks = readJson(TASKS_FILE, []);
-let courses = readJson(COURSES_FILE, []);
+let courses = readJson(COURSES_FILE, []); // 启动后会用 cleanCourse 规整一遍（补上新字段，如 link / credit）
 let settings = {
   cheerEnabled: true,
+  radioEnabled: true,
+  dimEnabled: true,
   cheerSeconds: 8,
   reminderSeconds: 12,
   eyeMinutes: 20,
@@ -242,6 +252,7 @@ function openManager() {
     height: 780,
     minWidth: 440,
     title: '待办管理',
+    icon: appIcon(),
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
@@ -262,6 +273,7 @@ function openTaskWindow(id) {
     minWidth: 340,
     minHeight: 300,
     title: '任务详情',
+    icon: appIcon(),
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
@@ -279,7 +291,16 @@ function togglePet() {
   saveSettings();
 }
 
+// 自定义图标：把 512×512 的 build/icon.png 放进去即可（托盘、窗口、安装包、exe 都用它）；没有就用下面画的蓝色小圆脸
+const ICON_FILE = path.join(__dirname, 'build', 'icon.png');
+function appIcon() {
+  if (!fs.existsSync(ICON_FILE)) return undefined;
+  const img = nativeImage.createFromPath(ICON_FILE);
+  return img.isEmpty() ? undefined : img;
+}
 function makeTrayIcon() {
+  const custom = appIcon();
+  if (custom) return custom.resize({ width: 32, height: 32 });
   const size = 32;
   const buf = Buffer.alloc(size * size * 4);
   const c = (size - 1) / 2;
@@ -313,6 +334,78 @@ function createTray() {
   tray.on('click', togglePet);
   tray.on('double-click', openManager);
 }
+
+// ---------- 媒体键（小收音机）：常驻一个 PowerShell，收到按键名就模拟系统媒体键 ----------
+const MEDIA_VK = { prev: 0xb1, playpause: 0xb3, next: 0xb0, mute: 0xad, volDown: 0xae, volUp: 0xaf };
+const MEDIA_PS = `
+Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);' -Name K -Namespace W
+while ($true) { $l = [Console]::In.ReadLine(); if ($null -eq $l) { break }
+  $vk = [byte][int]$l; [W.K]::keybd_event($vk, 0, 1, [UIntPtr]::Zero); [W.K]::keybd_event($vk, 0, 3, [UIntPtr]::Zero) }
+`;
+let mediaProc = null;
+function sendMediaKey(name) {
+  const vk = MEDIA_VK[name];
+  if (!vk || process.platform !== 'win32') return;
+  if (!mediaProc || mediaProc.killed || mediaProc.exitCode !== null) {
+    mediaProc = require('child_process').spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(MEDIA_PS, 'utf16le').toString('base64')],
+      { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] },
+    );
+    mediaProc.on('error', () => (mediaProc = null));
+    mediaProc.stdin.on('error', () => {});
+  }
+  mediaProc.stdin.write(vk + String.fromCharCode(10));
+}
+app.on('before-quit', () => {
+  try { if (mediaProc) mediaProc.kill(); } catch {}
+  watchMedia(false);
+});
+// 正在播放的歌名：另起一个 PowerShell 读取系统媒体会话（SMTC），只有收音机显示时才运行
+const MEDIA_INFO_PS = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\nAdd-Type -AssemblyName System.Runtime.WindowsRuntime\n$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]\nfunction Await($op, $type) { $t = $asTask.MakeGenericMethod($type).Invoke($null, @($op)); $t.Wait(-1) | Out-Null; $t.Result }\n[void][Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]\n[void][Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType = WindowsRuntime]\n$mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])\n$last = ''\nwhile ($true) {\n  $o = @{ title = ''; artist = ''; playing = $false }\n  try {\n    $s = $mgr.GetCurrentSession()\n    if ($s) {\n      $p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])\n      $o.title = [string]$p.Title; $o.artist = [string]$p.Artist\n      $o.playing = ([string]$s.GetPlaybackInfo().PlaybackStatus -eq 'Playing')\n    }\n  } catch {}\n  $j = $o | ConvertTo-Json -Compress\n  if ($j -ne $last) { [Console]::Out.WriteLine($j); [Console]::Out.Flush(); $last = $j }\n  Start-Sleep -Milliseconds 1500\n}\n";
+let infoProc = null;
+let lastMediaInfo = { title: '', artist: '', playing: false };
+function sendMediaInfo() {
+  if (petWin && !petWin.isDestroyed()) petWin.webContents.send('media:info', lastMediaInfo);
+}
+function watchMedia(on) {
+  if (!on) {
+    if (infoProc) {
+      try { infoProc.kill(); } catch {}
+      infoProc = null;
+    }
+    return;
+  }
+  if (infoProc || process.platform !== 'win32') return;
+  infoProc = require('child_process').spawn(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(MEDIA_INFO_PS, 'utf16le').toString('base64')],
+    { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  let buf = '';
+  infoProc.stdout.setEncoding('utf8');
+  infoProc.stdout.on('data', (d) => {
+    buf += d;
+    const lines = buf.split(String.fromCharCode(10));
+    buf = lines.pop();
+    for (const l of lines) {
+      try {
+        const o = JSON.parse(l);
+        lastMediaInfo = { title: String(o.title || ''), artist: String(o.artist || ''), playing: !!o.playing };
+        sendMediaInfo();
+      } catch {}
+    }
+  });
+  const me = infoProc;
+  me.on('exit', () => {
+    if (infoProc === me) infoProc = null;
+  });
+}
+ipcMain.on('media:watch', (_e, on) => {
+  watchMedia(!!on);
+  if (on) sendMediaInfo();
+});
+ipcMain.on('media:key', (_e, name) => sendMediaKey(String(name)));
 
 // ---------- IPC ----------
 ipcMain.handle('tasks:get', () => decorated());
@@ -372,8 +465,9 @@ function cleanCourse(c, id) {
     id: id || c.id || `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: String(c.name || '').trim().slice(0, 100),
     teacher: String(c.teacher || '').trim().slice(0, 60),
-    mode: c.mode === 'online' ? 'online' : 'offline',
+    mode: c.mode === 'online' ? 'online' : c.mode === 'hybrid' ? 'hybrid' : 'offline',
     place: String(c.place || '').trim().slice(0, 300),
+    link: c.mode === 'hybrid' ? String(c.link || '').trim().slice(0, 300) : '',
     weekday: wd >= 1 && wd <= 7 ? wd : 1,
     start: reTime.test(c.start) ? c.start : '09:00',
     end: reTime.test(c.end) ? c.end : '10:00',
@@ -383,19 +477,29 @@ function cleanCourse(c, id) {
     exceptions: Array.isArray(c.exceptions) ? c.exceptions.filter((d) => reDate.test(d)) : [],
     source: c.source === 'ics' ? 'ics' : 'manual',
     uid: String(c.uid || '').slice(0, 200),
+    credit: Number.isFinite(+c.credit) && c.credit !== null && c.credit !== '' && +c.credit >= 0 ? Math.min(Math.round(+c.credit * 10) / 10, 30) : null,
   };
 }
+// 旧版本保存的课程没有 link / credit 等新字段，启动时统一规整一遍
+courses = courses.map((c) => cleanCourse(c, c.id)).filter((c) => c.name);
 const commitCourses = () => {
   writeJson(COURSES_FILE, courses);
   broadcastCourses();
 };
 ipcMain.handle('courses:get', () => courses);
+// 完全相同（含日期范围和频率）的课不重复添加
+const fullSig = (c) => [c.name.toLowerCase(), c.weekday, c.start, c.end, (c.place || '').toLowerCase(), c.mode, (c.link || '').toLowerCase(), c.from, c.until, c.interval].join('|');
+function pushUnique(cc) {
+  if (!cc.name) return false;
+  if (courses.some((x) => fullSig(x) === fullSig(cc))) return false;
+  courses.push(cc);
+  return true;
+}
 ipcMain.handle('courses:add', (_e, list) => {
-  for (const c of [].concat(list)) {
-    const cc = cleanCourse({ ...c, id: undefined });
-    if (cc.name) courses.push(cc);
-  }
+  let added = 0;
+  for (const c of [].concat(list)) if (pushUnique(cleanCourse({ ...c, id: undefined }))) added++;
   commitCourses();
+  return { added, skipped: [].concat(list).length - added };
 });
 ipcMain.handle('courses:update', (_e, id, patch) => {
   const i = courses.findIndex((c) => c.id === id);
@@ -413,11 +517,10 @@ ipcMain.handle('courses:clear', () => {
 });
 ipcMain.handle('courses:import', (_e, { list, replaceIcs }) => {
   if (replaceIcs) courses = courses.filter((c) => c.source !== 'ics');
-  for (const c of list || []) {
-    const cc = cleanCourse({ ...c, id: undefined, source: 'ics' });
-    if (cc.name) courses.push(cc);
-  }
+  let added = 0;
+  for (const c of list || []) if (pushUnique(cleanCourse({ ...c, id: undefined, source: 'ics' }))) added++;
   commitCourses();
+  return { added, skipped: (list || []).length - added };
 });
 ipcMain.handle('dialog:ics', async () => {
   const r = await dialog.showOpenDialog(managerWin, { properties: ['openFile'], filters: [{ name: '日历文件 (.ics)', extensions: ['ics'] }] });
@@ -491,6 +594,8 @@ function savePetPos() {
 }
 ipcMain.handle('settings:set', (_e, patch) => {
   if (patch.cheerEnabled !== undefined) settings.cheerEnabled = String(patch.cheerEnabled) === 'true';
+  if (patch.dimEnabled !== undefined) settings.dimEnabled = String(patch.dimEnabled) === 'true';
+  if (patch.radioEnabled !== undefined) settings.radioEnabled = String(patch.radioEnabled) === 'true';
   for (const k of ['eyeMinutes', 'waterMinutes', 'moveMinutes', 'cheerSeconds', 'reminderSeconds']) {
     if (patch[k] !== undefined && Number.isFinite(+patch[k])) settings[k] = Math.min(Math.max(Math.round(+patch[k]), 0), 600);
   }

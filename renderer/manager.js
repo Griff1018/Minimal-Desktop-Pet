@@ -358,8 +358,8 @@ function renderCalendar() {
     for (const c of cs.slice(0, 2)) {
       const chip = el('div', 'cchip course', `${c.start} ${c.name}`);
       chip.style.borderColor = courseColor(c.name);
-      chip.style.background = `color-mix(in srgb, ${courseColor(c.name)} 16%, white)`;
-      chip.title = `${c.name}  ${c.start}–${c.end}  ${MODE_LABEL[c.mode]}`;
+      chip.style.background = `color-mix(in srgb, ${courseColor(c.name)} 16%, var(--tint-base))`;
+      chip.title = `${c.name}  ${c.start}–${c.end}  ${MODE_LABEL[c.mode]}  ${courseWhere(c).join('  ')}`;
       cell.append(chip);
     }
     const hiddenCount = Math.max(0, list.length - maxT) + Math.max(0, cs.length - 2);
@@ -459,8 +459,9 @@ document.querySelectorAll('.vtab').forEach((x) => {
 });
 
 // ---------- 设置 ----------
-const SETTING_KEYS = ['bubbleSeconds', 'bubbleWidth', 'bubbleHeight', 'bubblePos', 'bubbleTheme', 'cheerEnabled', 'cheerSeconds', 'reminderSeconds', 'eyeMinutes', 'waterMinutes', 'moveMinutes', 'petHeight'];
+const SETTING_KEYS = ['bubbleSeconds', 'bubbleWidth', 'bubbleHeight', 'bubblePos', 'bubbleTheme', 'cheerEnabled', 'radioEnabled', 'dimEnabled', 'cheerSeconds', 'reminderSeconds', 'eyeMinutes', 'waterMinutes', 'moveMinutes', 'petHeight'];
 function fillSettings(s) {
+  document.documentElement.dataset.theme = s.bubbleTheme === 'dark' ? 'dark' : 'light';
   for (const k of SETTING_KEYS) if (document.activeElement !== $('s_' + k)) $('s_' + k).value = s[k];
 }
 for (const k of SETTING_KEYS) {

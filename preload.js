@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('api', {
   setSettings: (p) => ipcRenderer.invoke('settings:set', p),
   getSprites: () => ipcRenderer.invoke('sprites:get'),
 
+  mediaWatch: (on) => ipcRenderer.send('media:watch', on),
+  onMediaInfo: on('media:info'),
+  mediaKey: (name) => ipcRenderer.send('media:key', name),
   dragStart: () => ipcRenderer.send('pet:dragStart'),
   resizeStart: (sign) => ipcRenderer.send('pet:resizeStart', sign),
   getEnv: () => ipcRenderer.invoke('pet:getEnv'),

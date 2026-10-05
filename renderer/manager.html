@@ -1,13 +1,16 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh" data-theme="light">
 <head>
 <meta charset="utf-8">
 <title>待办管理</title>
 <style>
-  :root { --bg: #f5f6fa; --card: #fff; --line: #e1e4ec; --text: #22242e; --sub: #6b7080; --accent: #4f6ef7; }
+  :root { --bg: #f5f6fa; --card: #fff; --line: #e1e4ec; --text: #22242e; --sub: #6b7080; --accent: #4f6ef7; --tint-base: #fff; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px "Microsoft YaHei UI", "Segoe UI", sans-serif; }
-  .wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .wrap { max-width: 1500px; margin: 0 auto; padding: 16px; }
+  /* 添加表单和设置卡片保持适中宽度；列表 / 日历 / 课程表那张卡片随窗口变宽 */
+  .wrap > .card:not(.view) { max-width: 720px; }
+  .card.view { container-type: inline-size; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
   h2 { font-size: 15px; margin: 0 0 10px; }
   textarea, input, select { width: 100%; font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: inherit; }
@@ -86,9 +89,25 @@
   /* ---------- 课程表 ---------- */
   .tt-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
   .tt-bar .spacer { flex: 1; }
+  /* 日历：卡片够宽（≥ 820px）时，月历和当天事项并排 */
+  .cal-layout { display: block; }
+  /* 课程表：卡片够宽时，编辑课程的表单出现在课表右边；窄时在课表上方 */
+  .tt-layout { display: flex; flex-direction: column; }
+  .tt-side { order: -1; }
+  @container (min-width: 820px) {
+    .cal-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, 1fr); gap: 22px; align-items: start; }
+    .cal-side .day-panel { margin-top: 0; border-top: none; padding-top: 0; }
+    .cal-side .day-panel + .day-panel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+    #ttView.editing .tt-layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 22px; align-items: start; }
+    #ttView.editing .tt-side { order: 0; position: sticky; top: 8px; }
+  }
+  .tt-summary { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 8px 12px; margin-bottom: 10px; border-radius: 10px; background: #f1f5ff; border: 1px solid #dbe4ff; font-size: 13px; }
+  .tt-summary b { font-size: 16px; color: var(--accent); margin: 0 2px; }
+  .tt-summary .none { color: var(--sub); }
   .tt-form { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 14px; background: #fafbff; }
   .tt-form h2 { margin-top: 0; }
   .tt-field { margin-top: 8px; flex: 1; min-width: 100px; }
+  .tt-field textarea { min-height: 72px; }
   .tt-field .lbl { display: block; font-size: 12px; color: var(--sub); margin-bottom: 3px; }
   .days { display: flex; gap: 6px; flex-wrap: wrap; }
   .days label { display: flex; align-items: center; gap: 3px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 14px; cursor: pointer; background: #fff; }
@@ -98,20 +117,30 @@
   .seg button:first-child { border-radius: 8px 0 0 8px; }
   .seg button:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
   .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .tt-grid { display: grid; grid-template-columns: 40px repeat(7, minmax(0, 1fr)); column-gap: 2px; margin-bottom: 4px; }
+  .tt-scroll { overflow-x: auto; padding-bottom: 4px; }
+  .tt-grid { display: grid; grid-template-columns: 40px repeat(7, minmax(112px, 1fr)); column-gap: 2px; margin-bottom: 4px; }
+  .tt-grid[hidden] { display: none; }
   .tt-dh { text-align: center; font-size: 12px; color: var(--sub); padding: 4px 0; }
   .tt-dh.today { color: var(--accent); font-weight: 700; }
   .tt-axis { position: relative; }
   .tt-hl { position: absolute; left: 0; font-size: 10px; color: var(--sub); transform: translateY(-6px); }
   .tt-col { position: relative; border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent var(--hh)); }
   .tt-col.today { background-color: #f3f6ff; }
-  .tt-block { position: absolute; box-sizing: border-box; border-left: 3px solid; border-radius: 4px; padding: 2px 4px; overflow: hidden; cursor: pointer; font-size: 11px; line-height: 1.3; }
+  .tt-block { position: absolute; box-sizing: border-box; border-left: 4px solid; border-radius: 5px; padding: 3px 6px; overflow: hidden; cursor: pointer; font-size: 12px; line-height: 1.3; }
   .tt-block:hover { filter: brightness(.96); box-shadow: 0 1px 4px rgba(0,0,0,.2); z-index: 2; }
-  .tt-block .b-name { font-weight: 700; }
-  .tt-block .b-sub { color: #555; font-size: 10px; word-break: break-all; }
+  .tt-block .b-name { font-weight: 700; font-size: 12.5px; overflow-wrap: anywhere; }
+  .tt-block .b-sub { color: #444; font-size: 11px; overflow-wrap: anywhere; margin-top: 1px; }
+  .tt-block .b-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .tt-block.short .b-name { font-size: 12px; }
   .mode { font-size: 10px; padding: 0 6px; border-radius: 8px; vertical-align: 1px; font-weight: 400; }
   .mode.offline { background: #e6f4ea; color: #1d7a3a; }
   .mode.online { background: #e3ebff; color: #2f4fd1; }
+  .mode.hybrid { background: linear-gradient(90deg, #e6f4ea, #e3ebff); color: #2a5aa8; }
+  .im-merges { border: 1px solid #ffe0a3; background: #fffaf0; border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-size: 13px; }
+  .im-merges .mg-row { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-top: 1px dashed #f0d9a8; cursor: pointer; }
+  .im-merges .mg-row:first-of-type { border-top: none; }
+  .im-merges input { width: auto; margin-top: 3px; }
+  .seg button { padding: 7px 8px; }
   .course-card { display: flex; gap: 10px; align-items: flex-start; padding: 6px 10px; margin-top: 6px; border-left: 4px solid; border-radius: 6px; cursor: pointer; }
   .course-card:hover { filter: brightness(.97); }
   .cc-time { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
@@ -144,6 +173,45 @@
   .drop-on { outline: 3px dashed var(--accent); outline-offset: -6px; }
   details summary { cursor: pointer; font-weight: 700; }
   .set-grid { display: grid; grid-template-columns: 1fr 170px; gap: 8px; align-items: center; margin-top: 10px; }
+
+  /* ---------- 暗色主题（VS Code Dark+），和对话框主题同步 ---------- */
+  [data-theme="dark"] { color-scheme: dark; --bg: #1e1e1e; --card: #252526; --line: #3c3c3c; --text: #d4d4d4; --sub: #9a9a9a; --accent: #0e639c; --tint-base: #1e1e1e; }
+  [data-theme="dark"] textarea, [data-theme="dark"] input, [data-theme="dark"] select { background: #313131; }
+  [data-theme="dark"] button { background: #333333; }
+  [data-theme="dark"] button:hover { background: #3e3e42; }
+  [data-theme="dark"] button.primary { background: var(--accent); }
+  [data-theme="dark"] button.primary:hover { background: #1177bb; }
+  [data-theme="dark"] button.danger { background: #c72e2e; border-color: #c72e2e; }
+  [data-theme="dark"] button.danger:hover { background: #e03c3c; border-color: #e03c3c; }
+  [data-theme="dark"] .dt { background: #313131; }
+  [data-theme="dark"] .dt input[type=date] { background: transparent; }
+  [data-theme="dark"] .tf:focus { background: #094771; }
+  [data-theme="dark"] .chip { background: #2d2d30; color: #3794ff; }
+  [data-theme="dark"] .chip b { color: #9a9a9a; }
+  [data-theme="dark"] .imgchip b { background: #333; color: #ddd; }
+  [data-theme="dark"] .tab, [data-theme="dark"] .vtab, [data-theme="dark"] .days label { background: #2d2d30; }
+  [data-theme="dark"] .tab.on, [data-theme="dark"] .vtab.on { background: var(--accent); }
+  [data-theme="dark"] .meta.over { color: #f14c4c; }
+  [data-theme="dark"] .cal-cell { background: #1e1e1e; }
+  [data-theme="dark"] .cal-cell.other { background: #252526; }
+  [data-theme="dark"] .cal-cell.dragover { background: #04395e; }
+  [data-theme="dark"] .cchip { background: #2d2d30; }
+  [data-theme="dark"] .tt-summary { background: #1f2a36; border-color: #264f78; }
+  [data-theme="dark"] .tt-form { background: #1f1f1f; }
+  [data-theme="dark"] .seg button.on { background: var(--accent); }
+  [data-theme="dark"] .tt-col.today { background-color: #2a2d2e; }
+  [data-theme="dark"] .tt-block:hover { filter: brightness(1.15); }
+  [data-theme="dark"] .tt-block .b-sub { color: #b5b5b5; }
+  [data-theme="dark"] .course-card:hover { filter: brightness(1.15); }
+  [data-theme="dark"] .mode.offline { background: #1e3a28; color: #89d185; }
+  [data-theme="dark"] .mode.online { background: #1f2f4d; color: #75a7ff; }
+  [data-theme="dark"] .mode.hybrid { background: linear-gradient(90deg, #1e3a28, #1f2f4d); color: #9cc3f0; }
+  [data-theme="dark"] .im-merges { border-color: #5a4a1f; background: #2b2619; }
+  [data-theme="dark"] .im-merges .mg-row { border-top-color: #5a4a1f; }
+  [data-theme="dark"] .cl-note { color: #e0a84a; }
+  [data-theme="dark"] .flag { background: #4a3a14; color: #e0a84a; }
+  [data-theme="dark"] .modal { background: rgba(0,0,0,.6); }
+  [data-theme="dark"] .modal-box { background: #252526; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
 </style>
 </head>
 <body>
@@ -177,7 +245,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card view">
     <div class="tabs vtabs">
       <div class="vtab on" data-view="list">☰ 列表</div>
       <div class="vtab" data-view="cal">📅 日历</div>
@@ -195,20 +263,26 @@
     </div>
 
     <div id="calView" hidden>
-      <div class="cal-head">
-        <button id="calPrev" title="上个月">‹</button>
-        <div class="cal-title" id="calTitle"></div>
-        <button id="calNext" title="下个月">›</button>
-        <button id="calToday">今天</button>
-        <div class="spacer"></div>
-        <label class="cal-opt"><input type="checkbox" id="calShowCourses" checked> 显示课程</label>
-        <label class="cal-opt"><input type="checkbox" id="calShowDone"> 显示已完成</label>
+      <div class="cal-layout">
+        <div class="cal-main">
+          <div class="cal-head">
+            <button id="calPrev" title="上个月">‹</button>
+            <div class="cal-title" id="calTitle"></div>
+            <button id="calNext" title="下个月">›</button>
+            <button id="calToday">今天</button>
+            <div class="spacer"></div>
+            <label class="cal-opt"><input type="checkbox" id="calShowCourses" checked> 显示课程</label>
+            <label class="cal-opt"><input type="checkbox" id="calShowDone"> 显示已完成</label>
+          </div>
+          <div class="cal-week"><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div></div>
+          <div class="cal-grid" id="calGrid"></div>
+          <div class="hint">点日期查看当天事项；把事项条拖到别的日期可改截止日。</div>
+        </div>
+        <div class="cal-side">
+          <div class="day-panel" id="dayPanel"></div>
+          <div class="day-panel" id="noDue"></div>
+        </div>
       </div>
-      <div class="cal-week"><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div></div>
-      <div class="cal-grid" id="calGrid"></div>
-      <div class="hint">点日期查看当天事项；把事项条拖到别的日期可改截止日。</div>
-      <div class="day-panel" id="dayPanel"></div>
-      <div class="day-panel" id="noDue"></div>
     </div>
 
     <div id="ttView" hidden>
@@ -217,54 +291,64 @@
         <button id="ttImport">📥 导入 .ics</button>
         <span id="ttStatus" class="hint" style="margin:0"></span>
         <div class="spacer"></div>
+        <button id="ttMerge" title="找出同一科目线上 / 线下时间重叠的课程，由你选择是否合并">🔀 合并重叠课程</button>
         <button id="ttClear" class="danger" hidden>清空课程表</button>
       </div>
 
-      <div id="ttForm" class="tt-form" hidden>
-        <h2 id="ttFormTitle">添加课程</h2>
-        <div class="row">
-          <input id="cName" placeholder="课程名称（必填）" maxlength="100">
-          <input id="cTeacher" placeholder="老师" maxlength="60">
-        </div>
-        <div class="tt-field">
-          <span class="lbl">上课星期（可多选，每个星期会各建一条）</span>
-          <div class="days">
-            <label><input type="checkbox" class="cday" value="1">一</label><label><input type="checkbox" class="cday" value="2">二</label><label><input type="checkbox" class="cday" value="3">三</label><label><input type="checkbox" class="cday" value="4">四</label><label><input type="checkbox" class="cday" value="5">五</label><label><input type="checkbox" class="cday" value="6">六</label><label><input type="checkbox" class="cday" value="7">日</label>
+      <div class="tt-layout">
+        <div class="tt-main">
+          <div class="cal-head">
+            <button id="ttPrev" title="上一周">‹</button>
+            <div class="cal-title" id="ttWeekTitle"></div>
+            <button id="ttNext" title="下一周">›</button>
+            <button id="ttThisWeek">本周</button>
           </div>
-        </div>
-        <div class="row">
-          <div class="tt-field"><span class="lbl">开始（24 小时制）</span><input id="cStart" placeholder="09:00" maxlength="5" inputmode="numeric"></div>
-          <div class="tt-field"><span class="lbl">结束（24 小时制）</span><input id="cEnd" placeholder="10:30" maxlength="5" inputmode="numeric"></div>
-          <div class="tt-field"><span class="lbl">上课方式</span>
-            <div class="seg"><button type="button" id="cModeOffline" class="on">线下</button><button type="button" id="cModeOnline">线上</button></div>
-          </div>
-        </div>
-        <div class="tt-field"><span class="lbl" id="cPlaceLabel">教室 / 地点</span><input id="cPlace" placeholder="例如：B3-201" maxlength="300"></div>
-        <div class="row">
-          <div class="tt-field"><span class="lbl">学期开始（可空）</span><input id="cFrom" type="date"></div>
-          <div class="tt-field"><span class="lbl">学期结束（可空）</span><input id="cUntil" type="date"></div>
-          <div class="tt-field"><span class="lbl">频率</span>
-            <select id="cInterval"><option value="1">每周</option><option value="2">每两周</option><option value="3">每三周</option><option value="4">每四周</option></select>
-          </div>
-        </div>
-        <div class="row">
-          <button id="ttSave" class="primary">添加</button>
-          <button id="ttCancel" class="fixed">取消</button>
-        </div>
-      </div>
+          <div id="ttSummary" class="tt-summary" hidden></div>
+          <div id="ttEmpty" class="empty" hidden>还没有课程。点「＋ 添加课程」手动添加，或「📥 导入 .ics」从学校课表导入（也可以把 .ics 文件直接拖进窗口）。</div>
+          <div class="tt-scroll"><div class="tt-grid" id="ttGrid"></div></div>
 
-      <div class="cal-head">
-        <button id="ttPrev" title="上一周">‹</button>
-        <div class="cal-title" id="ttWeekTitle"></div>
-        <button id="ttNext" title="下一周">›</button>
-        <button id="ttThisWeek">本周</button>
-      </div>
-      <div id="ttEmpty" class="empty" hidden>还没有课程。点「＋ 添加课程」手动添加，或「📥 导入 .ics」从学校课表导入（也可以把 .ics 文件直接拖进窗口）。</div>
-      <div class="tt-grid" id="ttGrid"></div>
+          <div class="day-panel">
+            <div class="day-head"><div class="day-title">全部课程 · <span id="ttCount">0</span> 条</div></div>
+            <div id="ttList"></div>
+          </div>
+        </div>
 
-      <div class="day-panel">
-        <div class="day-head"><div class="day-title">全部课程 · <span id="ttCount">0</span> 条</div></div>
-        <div id="ttList"></div>
+        <div class="tt-side">
+          <div id="ttForm" class="tt-form" hidden>
+            <h2 id="ttFormTitle">添加课程</h2>
+            <div class="tt-field"><span class="lbl">课程名称（必填）</span><textarea id="cName" rows="3" placeholder="例如：数据库原理" maxlength="100"></textarea></div>
+            <div class="row">
+              <div class="tt-field"><span class="lbl">老师（可选）</span><input id="cTeacher" placeholder="例如：王老师" maxlength="60"></div>
+              <div class="tt-field" style="flex:0 0 140px"><span class="lbl">学分 / Credit hour</span><input id="cCredit" type="number" min="0" max="30" step="0.5" placeholder="例如：3"></div>
+            </div>
+            <div class="tt-field">
+              <span class="lbl">上课星期（可多选，每个星期会各建一条）</span>
+              <div class="days">
+                <label><input type="checkbox" class="cday" value="1">一</label><label><input type="checkbox" class="cday" value="2">二</label><label><input type="checkbox" class="cday" value="3">三</label><label><input type="checkbox" class="cday" value="4">四</label><label><input type="checkbox" class="cday" value="5">五</label><label><input type="checkbox" class="cday" value="6">六</label><label><input type="checkbox" class="cday" value="7">日</label>
+              </div>
+            </div>
+            <div class="row">
+              <div class="tt-field"><span class="lbl">开始（24 小时制）</span><input id="cStart" placeholder="09:00" maxlength="5" inputmode="numeric"></div>
+              <div class="tt-field"><span class="lbl">结束（24 小时制）</span><input id="cEnd" placeholder="10:30" maxlength="5" inputmode="numeric"></div>
+              <div class="tt-field"><span class="lbl">上课方式</span>
+                <div class="seg"><button type="button" id="cModeOffline" class="on">线下</button><button type="button" id="cModeOnline">线上</button><button type="button" id="cModeHybrid" title="同一时段既有教室又有线上链接">线上+线下</button></div>
+              </div>
+            </div>
+            <div class="tt-field"><span class="lbl" id="cPlaceLabel">教室 / 地点</span><input id="cPlace" placeholder="例如：B3-201" maxlength="300"></div>
+            <div class="tt-field" id="cLinkWrap" hidden><span class="lbl">会议链接 / 平台（线上部分）</span><input id="cLink" placeholder="例如：https://zoom.us/j/…" maxlength="300"></div>
+            <div class="row">
+              <div class="tt-field"><span class="lbl">学期开始（可空）</span><input id="cFrom" type="date"></div>
+              <div class="tt-field"><span class="lbl">学期结束（可空）</span><input id="cUntil" type="date"></div>
+              <div class="tt-field"><span class="lbl">频率</span>
+                <select id="cInterval"><option value="1">每周</option><option value="2">每两周</option><option value="3">每三周</option><option value="4">每四周</option></select>
+              </div>
+            </div>
+            <div class="row">
+              <button id="ttSave" class="primary">添加</button>
+              <button id="ttCancel" class="fixed">取消</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -277,6 +361,7 @@
         <label><input type="checkbox" id="imReplace"> 导入前先清除之前导入的课程（用于更新课表）</label>
         <label>没有结束日期的课程统一结束于 <input id="imUntil" type="date" style="width:auto"></label>
       </div>
+      <div id="imMerges" class="im-merges" hidden></div>
       <div class="im-tools"><button id="imAll">全选</button><button id="imNone">全不选</button></div>
       <div id="imList" class="im-list"></div>
       <details id="imSkippedBox" hidden><summary id="imSkippedSum" style="cursor:pointer;color:var(--sub);font-size:13px"></summary><div id="imSkipped"></div></details>
@@ -289,6 +374,10 @@
       <summary>设置</summary>
       <div class="set-grid">
         <label for="s_bubbleSeconds">气泡自动消失（秒，0 = 不消失）</label><input id="s_bubbleSeconds" type="number" min="0">
+        <label for="s_radioEnabled">待机 / 睡觉时宠物旁的小收音机（控制音乐）</label>
+        <select id="s_radioEnabled"><option value="true">显示</option><option value="false">隐藏</option></select>
+        <label for="s_dimEnabled">不悬停几秒后，对话框和收音机变半透明</label>
+        <select id="s_dimEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
         <label for="s_cheerEnabled">任务列表旁的打气小对话框</label>
         <select id="s_cheerEnabled"><option value="true">开启</option><option value="false">关闭</option></select>
         <label for="s_cheerSeconds">打气话停留时间（秒，0 = 跟随任务对话框）</label><input id="s_cheerSeconds" type="number" min="0" max="600">
@@ -296,7 +385,7 @@
         <label for="s_eyeMinutes">👀 护眼提醒间隔（分钟，0 = 关闭）</label><input id="s_eyeMinutes" type="number" min="0" max="600">
         <label for="s_waterMinutes">💧 喝水提醒间隔（分钟，0 = 关闭）</label><input id="s_waterMinutes" type="number" min="0" max="600">
         <label for="s_moveMinutes">🚶 起来走动提醒间隔（分钟，0 = 关闭）</label><input id="s_moveMinutes" type="number" min="0" max="600">
-        <label for="s_bubbleTheme">对话框主题</label>
+        <label for="s_bubbleTheme">主题（管理窗口和对话框一起变）</label>
         <select id="s_bubbleTheme"><option value="light">亮色（蓝色线稿风）</option><option value="dark">暗色（VS Code）</option></select>
         <label for="s_bubblePos">对话框位置（放不下时自动换到另一侧）</label>
         <select id="s_bubblePos"><option value="above">优先在宠物上方</option><option value="below">优先在宠物下方</option></select>

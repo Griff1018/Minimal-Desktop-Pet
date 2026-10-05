@@ -74,6 +74,101 @@ function resolveState(s) {
   chain.push('idle');
   return chain.find((x) => sprites[x] && sprites[x].length) || null;
 }
+// ---------- 悬停淡入淡出：鼠标在宠物 / 对话框 / 收音机上时完全显示，离开几秒后变半透明 ----------
+const DIM_DELAY = 3000;
+let dimTimer = 0;
+function wake(hovering) {
+  if (hovering || settings.dimEnabled === false) {
+    clearTimeout(dimTimer);
+    dimTimer = 0;
+    document.body.classList.remove('dim');
+  } else if (!dimTimer && !document.body.classList.contains('dim')) {
+    dimTimer = setTimeout(() => {
+      dimTimer = 0;
+      document.body.classList.add('dim');
+    }, DIM_DELAY);
+  }
+}
+document.addEventListener('mouseleave', () => wake(false));
+
+// ---------- 小收音机（一直显示，控制系统媒体键） ----------
+const radioEl = document.getElementById('radio');
+radioEl.addEventListener('mousedown', (e) => e.stopPropagation()); // 不触发宠物拖动
+radioEl.addEventListener('click', (e) => {
+  const b = e.target.closest('b[data-k]');
+  if (b) window.api.mediaKey(b.dataset.k);
+});
+radioEl.addEventListener('wheel', (e) => e.stopPropagation()); // 滚轮不缩放宠物
+for (const ev of ['dblclick', 'contextmenu']) radioEl.addEventListener(ev, (e) => e.stopPropagation());
+let radioOpen = true;
+try {
+  radioOpen = localStorage.getItem('radioOpen') !== '0';
+} catch {}
+const rTitle = document.getElementById('rTitle');
+const rPlay = document.getElementById('rPlay');
+function setRadioOpen(open) {
+  radioOpen = open;
+  try {
+    localStorage.setItem('radioOpen', open ? '1' : '0');
+  } catch {}
+  placeRadio();
+  updateLayout(); // 收音机占的位置变了，宠物缩放按钮要重新避让
+}
+document.getElementById('rOff').addEventListener('click', () => setRadioOpen(false));
+document.getElementById('rMini').addEventListener('click', () => setRadioOpen(true));
+// 歌名：太长就循环滚动
+function showMediaInfo(info) {
+  const text = info && info.title ? `♪ ${info.title}${info.artist ? ' - ' + info.artist : ''}` : '♪ 没有在播放';
+  const span = rTitle.firstElementChild;
+  if (span.dataset.t !== text) {
+    span.dataset.t = text;
+    span.textContent = text;
+    rTitle.title = text;
+    rTitle.classList.remove('scroll');
+    requestAnimationFrame(() => {
+      if (span.scrollWidth > rTitle.clientWidth) {
+        span.textContent = text + '　' + text; // 复制一份，滚动时首尾衔接
+        rTitle.style.setProperty('--shift', '-50%');
+        rTitle.classList.add('scroll');
+      }
+    });
+  }
+  rPlay.textContent = info && info.playing ? '⏸' : '▶';
+}
+window.api.onMediaInfo(showMediaInfo);
+let radioWatching = false;
+function placeRadio() {
+  const show = settings.radioEnabled !== false;
+  radioEl.classList.toggle('hidden', !show);
+  radioEl.classList.toggle('collapsed', !radioOpen);
+  const want = show && radioOpen;
+  if (want !== radioWatching) {
+    radioWatching = want;
+    window.api.mediaWatch(want);
+  }
+  if (!show) return;
+  const pr = petWrap.getBoundingClientRect();
+  const vis = visRect();
+  const w = radioEl.offsetWidth;
+  const h = radioEl.offsetHeight;
+  // 默认放在宠物左侧；那边放不下（屏幕边缘）就换到右侧。缩放把手之后会避开收音机（见 doLayout）
+  const leftPos = vis.left - pr.left - w - 8;
+  const rightPos = vis.right - pr.left + 8;
+  // 横向可用范围（相对宠物框）：不出窗口、不出屏幕
+  const wa = env ? env.wa : null;
+  const xMin = Math.max(-pr.left + 2, wa ? wa.x + 2 - env.x - pr.left : -1e9);
+  const xMax = Math.min(window.innerWidth - pr.left - w - 2, wa ? wa.x + wa.width - 2 - env.x - pr.left - w : 1e9);
+  const fitsAt = (x) => x >= xMin && x <= xMax;
+  let x = [leftPos, rightPos].find(fitsAt);
+  if (x === undefined) x = Math.min(Math.max(leftPos, xMin), Math.max(xMin, xMax)); // 两边都放不下：贴着屏幕边缘，尽量不出屏
+  // 纵向：贴着宠物脚边，但不能出屏幕（任务栏）或窗口
+  let y = pr.height - h - pr.height * 0.04;
+  const yMin = Math.max(-pr.top + 2, wa ? wa.y + 2 - env.y - pr.top : -1e9);
+  const yMax = Math.min(window.innerHeight - pr.top - h - 2, wa ? wa.y + wa.height - 2 - env.y - pr.top - h : 1e9);
+  y = Math.min(Math.max(y, yMin), Math.max(yMin, yMax));
+  radioEl.style.left = Math.round(x) + 'px';
+  radioEl.style.top = Math.round(y) + 'px';
+}
 function renderPet(force) {
   const s = currentState();
   const key = resolveState(s) || 'emoji:' + s;
@@ -92,6 +187,7 @@ function renderPet(force) {
     emoji.hidden = false;
     emoji.textContent = EMOJI[s];
   }
+  placeRadio();
 }
 setInterval(() => {
   frameIdx++;
@@ -115,7 +211,12 @@ function placeHint() {
   hintEl.classList.toggle('below', env.side === 'below');
   hintEl.style.transform = '';
   const r = hintEl.getBoundingClientRect();
-  const off = (settings.bubbleOff && settings.bubbleOff[env.side]) || { x: 0, y: 0 };
+  // 对准宠物可见部分：水平居中，紧贴头顶（在下方时贴脚下）
+  const vis = visRect();
+  const off = {
+    x: (vis.left + vis.right) / 2 - (r.left + r.right) / 2,
+    y: env.side === 'above' ? vis.top - 6 - r.bottom : vis.bottom + 6 - r.top,
+  };
   const wa = env.wa;
   const sL = env.x + r.left;
   const sT = env.y + r.top;
@@ -126,20 +227,20 @@ function placeHint() {
 }
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const CHEER_NORMAL = [
-  '加油！一件一件来，你可以的～', '先做最小的那一步，开始就成功一半啦', '你已经很棒了，保持节奏就好',
-  '做完一项就奖励自己一口水吧 💧', '慢慢来，比较快～', '今天也在认真生活，了不起！', '专注 25 分钟，然后休息 5 分钟，试试看？',
+  '加油！一件一件来，你可以的～', '先做最小的那一步，一步一脚印', '你已经很棒了，保持节奏就好',
+  '做完一项就小小奖励自己吧~', '慢慢来，比较快～', '今天也在认真生活，了不起！', '努力的你值得被鼓励~',
 ];
 const CHEER_URGENT = [
-  '有紧急的事项，先搞定它！深呼吸，你可以的', '先处理标红的那一条，其余的都不急', '逾期也别慌，现在开始就还来得及！',
+  '有紧急的事项，请优先处理', '先处理标红的任务！，不然你就要完蛋拉~', '冲刺!♿️ 冲刺!♿️ 冲!♿️',
 ];
 const CHEER_FEW = ['快收工啦，冲刺一下！', '只剩一点点了，胜利在望～', '最后一段路，稳稳走完！'];
 const CHEER_NONE = ['任务全清空啦，你真厉害！', '今天的你超棒，好好休息一下吧～'];
-const DONE_TEXTS = ['又完成一项！👏', '干得漂亮！继续保持～', '搞定！离清空更近一步啦', '太棒了！给自己点个赞 👍'];
+const DONE_TEXTS = ['又完成一项！👏', '干得漂亮！继续保持～', '搞定！离清空更近一步啦', '这简直就是老叟洗完头，干得漂亮啊'];
 function cheerPhrase() {
   const p = pending();
   if (!p.length) return pick(CHEER_NONE);
   if (p.some(isUrgent)) return pick(CHEER_URGENT);
-  if (p.length <= 2) return pick(CHEER_FEW);
+  if (p.length <= 2) return pick(CHEER_FExW);
   return pick(CHEER_NORMAL);
 }
 
@@ -207,32 +308,77 @@ function renderCheer() {
   cheerEl.classList.remove('hidden');
   positionCheer();
 }
-// 放在宠物可见部分的左或右：优先保持上次的一侧；放不下 / 会盖住任务对话框就换另一侧
+// 放在宠物可见部分的右 / 左 / 头顶：优先保持上次的位置；每个候选位置都先夹进屏幕（任务栏、屏幕边缘）和窗口里，
+// 再按“被推开多远 / 压到宠物 / 盖住任务对话框 / 盖住小收音机”打分，取最合适的一个
 function placeBeside(elm) {
   if (elm.classList.contains('hidden') || !env) return;
+  // 任务对话框打开时：打气话叠在对话框的外侧（对话框在宠物上方就叠在它上面，在下方就叠在它下面），宽度一致，像两层
+  elm.style.width = '';
+  elm.style.maxWidth = '';
+  elm.classList.remove('at-stack');
+  if (bubbleVisible() && !bubble.classList.contains('hidden')) {
+    const br = bubble.getBoundingClientRect();
+    elm.style.width = br.width + 'px';
+    elm.style.maxWidth = 'none';
+    const h = elm.offsetHeight;
+    const above = currentPos !== 'below';
+    const top = above ? br.top - h - 16 : br.bottom + 6; // 上方留出对话框左上角的 + 标记
+    const wa = env.wa;
+    const okY = top >= Math.max(2, wa.y + 2 - env.y) && top + h <= Math.min(window.innerHeight - 2, wa.y + wa.height - 2 - env.y);
+    const okX = br.left >= 2 && br.right <= window.innerWidth - 2;
+    if (okY && okX) {
+      elm._side = 'stack';
+      elm.style.left = Math.round(br.left) + 'px';
+      elm.style.top = Math.round(top) + 'px';
+      elm.classList.remove('at-right', 'at-left', 'at-top');
+      elm.classList.add('at-stack');
+      return;
+    }
+    elm.style.width = ''; // 外侧放不下：退回到宠物旁边
+    elm.style.maxWidth = '';
+  }
   const vis = visRect();
   const w = elm.offsetWidth;
   const h = elm.offsetHeight;
   const wa = env.wa;
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  const minX = Math.max(2, wa.x + 2 - env.x);
+  const maxX = Math.min(window.innerWidth - 2 - w, wa.x + wa.width - 2 - env.x - w);
   const minY = Math.max(2, wa.y + 2 - env.y);
   const maxY = Math.min(window.innerHeight - 2 - h, wa.y + wa.height - 2 - env.y - h);
-  const top = Math.round(Math.min(Math.max((vis.top + vis.bottom) / 2 - h / 2, minY), Math.max(minY, maxY)));
-  const bubbleRect = bubbleVisible() ? bubble.getBoundingClientRect() : null;
-  const over = (a, b) => Math.max(0, a) + Math.max(0, b);
-  const cands = ['right', 'left'].map((side) => {
-    const left = Math.round(side === 'right' ? vis.right + 12 : vis.left - 12 - w);
-    const right = left + w;
-    let bad = over(wa.x + 2 - (env.x + left), env.x + right - (wa.x + wa.width - 2)) + over(-left, right - window.innerWidth);
-    if (bubbleRect && left < bubbleRect.right && right > bubbleRect.left && top < bubbleRect.bottom && top + h > bubbleRect.top) bad += 1000;
-    if (side !== (elm._side || 'right')) bad += 4; // 小惯性，避免左右来回跳
-    return { side, left, bad };
+  const hit = (l, t, r) => l < r.right && l + w > r.left && t < r.bottom && t + h > r.top;
+  const avoid = [];
+  if (bubbleVisible()) avoid.push([bubble.getBoundingClientRect(), 1000]);
+  if (!radioEl.classList.contains('hidden')) {
+    const rr = radioEl.getBoundingClientRect(); // 含天线
+    avoid.push([{ left: rr.left, right: rr.right, top: rr.top - parseFloat(getComputedStyle(radioEl).fontSize) * 2.8, bottom: rr.bottom }, 500]);
+  }
+  if (!hintEl.classList.contains('hidden')) avoid.push([hintEl.getBoundingClientRect(), 300]);
+  const cy = vis.top + (vis.bottom - vis.top) * 0.36 - h / 2; // 偏上一些，给脚边的收音机留位置
+  const cands = [
+    { side: 'right', left: vis.right + 12, top: cy },
+    { side: 'left', left: vis.left - 12 - w, top: cy },
+    { side: 'top', left: (vis.left + vis.right) / 2 - w / 2, top: vis.top - 12 - h },
+  ].map((c) => {
+    const x = clamp(c.left, minX, maxX);
+    let y = clamp(c.top, minY, maxY);
+    // 会盖住收音机（含天线）就整体往上挪到它上面
+    for (const [r, pen] of avoid) if (pen === 500 && hit(x, y, r)) y = clamp(r.top - 8 - h, minY, maxY);
+    let bad = Math.abs(x - c.left) + Math.abs(y - c.top) * 0.3;
+    if (hit(x, y, { left: vis.left + 6, right: vis.right - 6, top: vis.top + 6, bottom: vis.bottom - 6 })) bad += 400; // 压到宠物
+    for (const [r, pen] of avoid) if (hit(x, y, r)) bad += pen;
+    if (c.side !== (elm._side || 'right')) bad += 4; // 小惯性，避免来回跳
+    if (c.side === 'top') bad += 3; // 头顶是最后的选择
+    return { side: c.side, x: Math.round(x), y: Math.round(y), bad };
   });
   const best = cands.reduce((a, b) => (b.bad < a.bad ? b : a));
   elm._side = best.side;
-  elm.style.left = best.left + 'px';
-  elm.style.top = top + 'px';
+  elm.style.left = best.x + 'px';
+  elm.style.top = best.y + 'px';
+  elm.style.setProperty('--tail-x', Math.min(Math.max((vis.left + vis.right) / 2 - best.x, 16), w - 16) + 'px');
   elm.classList.toggle('at-right', best.side === 'right');
   elm.classList.toggle('at-left', best.side === 'left');
+  elm.classList.toggle('at-top', best.side === 'top');
 }
 const positionCheer = () => placeBeside(cheerEl);
 
@@ -255,7 +401,7 @@ function bubbleCourseRow(c, now) {
     }
   }
   body.append(name);
-  const info = [c.teacher && `👤 ${c.teacher}`, c.place && `${c.mode === 'online' ? '🔗' : '📍'} ${c.place}`].filter(Boolean).join('  ');
+  const info = [c.teacher && `👤 ${c.teacher}`, ...courseWhere(c)].filter(Boolean).join('  ');
   if (info) body.append(el('div', 'cinfo', info));
   row.append(bar, el('div', 'ctime', `${c.start}–${c.end}`), body);
   return row;
@@ -473,6 +619,8 @@ function showBubble(auto) {
   }
   renderBubble();
   bubble.classList.remove('hidden');
+  document.body.classList.remove('dim'); // 刚弹出时完全显示，没被悬停就几秒后变淡
+  wake(false);
   renderCheer();
   updateLayout();
   if (auto) armHide();
@@ -481,7 +629,6 @@ function showBubble(auto) {
 function hideBubble() {
   clearTimeout(hideTimer);
   focusId = null;
-  bubbleMode = 'list';
   bubble.classList.add('hidden');
   pinned = false;
   clearTimeout(cheerTimer);
@@ -575,6 +722,7 @@ function positionBubble(off) {
   bubble.style.transform = `translate(${appliedX}px, ${appliedY}px)`;
   const tail = (pr.left + pr.right) / 2 - (natL + appliedX);
   bubble.style.setProperty('--tail-x', Math.min(Math.max(tail, 22), br.width - 22) + 'px');
+  positionCheer(); // 打气话叠在对话框外侧，跟着走
 }
 const savedOff = () => (settings.bubbleOff && settings.bubbleOff[currentPos]) || { x: 0, y: 0 };
 
@@ -603,11 +751,15 @@ async function doLayout() {
   if (!resizing) {
     const order = ['br', 'bl', 'tr', 'tl'];
     const pr = petWrap.getBoundingClientRect();
-    const c = order.find((k) => fits(outsideRect(pr, k))) || order[0];
+    placeRadio(); // 先摆收音机，缩放按钮再避开它
+    const rr = radioEl.classList.contains('hidden') ? null : radioEl.getBoundingClientRect();
+    const clear = (r) => !rr || r.right < rr.left - 2 || r.left > rr.right + 2 || r.bottom < rr.top - 2 || r.top > rr.bottom + 2;
+    const c = order.find((k) => fits(outsideRect(pr, k)) && clear(outsideRect(pr, k))) || order.find((k) => fits(outsideRect(pr, k))) || order[0];
     if (grip.dataset.c !== c) grip.dataset.c = c;
   }
   positionCheer();
   placeHint();
+  placeRadio();
   if (!bubbleVisible() || bubbleResizing || bubbleMoving) return;
   const pr = petWrap.getBoundingClientRect();
   // 对话框高度上限；可用空间不够时压矮，空间够了自动恢复
@@ -717,6 +869,8 @@ bflip.addEventListener('click', () => {
   window.api.setSettings({ bubblePos: target });
 });
 window.addEventListener('mousemove', (e) => {
+  const hov = document.elementFromPoint(e.clientX, e.clientY);
+  wake(!!(hov && hov.closest('#bubble, #petWrap, #radio')) || !!(bubbleMoving || bubbleResizing || dragging || resizing));
   if (bubbleMoving) {
     const m = bubbleMoving;
     positionBubble({ x: m.ox + e.clientX - m.x, y: m.oy + e.clientY - m.y });
@@ -727,6 +881,7 @@ window.addEventListener('mousemove', (e) => {
     settings.bubbleWidth = Math.round(Math.min(Math.max(r.w + 2 * r.sx * (e.clientX - r.x), 200), 370));
     settings.bubbleHeight = Math.round(Math.min(Math.max(r.h + r.sy * (e.clientY - r.y), 120), 480));
     applyBubbleVars();
+    positionCheer();
     return;
   }
   if (resizing) return;
@@ -817,6 +972,8 @@ window.api.onSettings((s) => {
   if (bubbleResizing || bubbleMoving) return;
   settings = s;
   applySettings();
+  if (s.dimEnabled === false) wake(true);
+  placeRadio();
   if (bubbleVisible()) renderBubble();
 });
 window.api.onSprites((s) => {

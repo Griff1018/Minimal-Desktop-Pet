@@ -122,6 +122,7 @@ function icsToLocal(dt) {
 }
 
 // ---- 老师 / 线上线下 / 地点 ----
+const ICS_MEETING_RE = /zoom|teams\.microsoft|meet\.google|webex|腾讯会议|voovmeeting|dingtalk|feishu|larksuite|bigbluebutton|collaborate/i;
 const ICS_ONLINE_RE = /https?:\/\/|zoom|teams|meet\.google|腾讯会议|钉钉|飞书|线上|在线|网课|online|webex|bigbluebutton/i;
 const ICS_TEACHER_RE = /(?:授课教师|任课教师|教师|老师|讲师|主讲|Teacher|Instructor|Lecturer|Professor|Prof\.?)\s*[:：]\s*([^\n;,，；]+)/i;
 function icsMeta(ev) {
@@ -131,10 +132,30 @@ function icsMeta(ev) {
   if (!teacher && ev.organizer && ev.organizer.params.CN) teacher = ev.organizer.params.CN;
   if (!teacher && ev.attendees.length && ev.attendees[0].params.CN) teacher = ev.attendees[0].params.CN;
   teacher = teacher.replace(/^mailto:/i, '');
+  if (/^(unknown|tba|tbc|n\/a|未知|待定)/i.test(teacher)) teacher = ''; // “Unknown Lecturer” 之类等于没填
   const urlInDesc = (ev.description.match(/https?:\/\/\S+/) || [])[0] || '';
-  const online = ICS_ONLINE_RE.test(ev.location) || !!ev.url || ICS_ONLINE_RE.test(ev.summary) || (!ev.location && !!urlInDesc);
-  let place = ev.location || ev.url || (online ? urlInDesc : '');
-  return { teacher, mode: online ? 'online' : 'offline', place: place.trim() };
+  const urlCand = ev.url || urlInDesc;
+  const physical = !!ev.location && !ICS_ONLINE_RE.test(ev.location);
+  const meeting = urlCand && ICS_MEETING_RE.test(urlCand) ? urlCand : '';
+  // 有实体教室 + 在线会议链接 → 混合；有教室但没有会议链接 → 线下（除非标题写了线上）
+  let mode;
+  let place;
+  let link = '';
+  if (physical) {
+    place = ev.location;
+    if (meeting && !ICS_ONLINE_RE.test(ev.summary)) {
+      mode = 'hybrid';
+      link = meeting;
+    } else mode = ICS_ONLINE_RE.test(ev.summary) ? 'online' : 'offline';
+  } else {
+    const online = ICS_ONLINE_RE.test(ev.location) || !!urlCand || ICS_ONLINE_RE.test(ev.summary);
+    mode = online ? 'online' : 'offline';
+    place = ev.location || urlCand;
+  }
+  const cm = (ev.description + '\n' + ev.summary).match(/(?:学分|Credit(?:\s*Hours?)?|Credits?)\s*[:：=]?\s*(\d+(?:\.\d+)?)/i);
+  place = (place || '').trim();
+  if (/^(online|线上|在线|网课)$/i.test(place)) place = ''; // 地点只写了“ONLINE”：没有实际信息
+  return { teacher, mode, place, link, credit: cm ? +cm[1] : null };
 }
 
 const ICS_DAYMAP = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
@@ -173,7 +194,7 @@ function icsToCourses(events) {
     const meta = icsMeta(ev);
     const fromKey = dateToKey(S);
     const base = { name, ...meta, start: icsHM(S), end: icsHM(E), source: 'ics', uid: ev.uid, exceptions: [] };
-    const once = (extra) => out.push({ ...base, weekday: isoWeekday(S), from: fromKey, until: fromKey, interval: 1, notes: [...notes, ...(extra ? [extra] : [])] });
+    const once = (extra) => out.push({ ...base, weekday: isoWeekday(S), from: fromKey, until: fromKey, interval: 1, once: !extra, notes: [...notes, ...(extra ? [extra] : [])] });
 
     if (!ev.rrule) {
       once();
@@ -216,5 +237,63 @@ function icsToCourses(events) {
     if (!until) notes.push('没有结束日期（可在导入时统一设置学期结束日）');
     for (const w of wds) out.push({ ...base, weekday: w, from: fromKey, until, interval, exceptions: [...exceptions], notes: [...notes] });
   }
-  return { courses: out, skipped };
+  const merged = icsMergeRepeats(out);
+  return { courses: merged.courses, skipped, stats: { merged: merged.merged, dupes: merged.dupes } };
+}
+
+const icsGcd = (a, b) => (b ? icsGcd(b, a % b) : a);
+// 自动去重：
+//  1) 很多学校导出的 .ics 把每周的同一节课拆成一个个单次事件 → 合并成一条每周（或隔周）的课程，缺的那几周记为停课
+//  2) 完全相同（课名、星期、起止时间、地点、方式、日期范围、频率都一样）的重复项只留一条
+function icsMergeRepeats(list) {
+  let merged = 0;
+  let dupes = 0;
+  const groups = new Map();
+  const rest = [];
+  for (const c of list) {
+    if (!c.once) {
+      rest.push(c);
+      continue;
+    }
+    const k = [courseSig(c), c.teacher].join('#');
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  for (const g of groups.values()) {
+    const dates = [...new Set(g.map((c) => c.from))].sort();
+    if (g.length > dates.length) dupes += g.length - dates.length; // 同一天同一节课重复出现
+    if (dates.length < 2) {
+      rest.push(g[0]);
+      continue;
+    }
+    const first = keyToDate(dates[0]);
+    const weeks = dates.map((d) => weeksBetween(first, keyToDate(d)));
+    let step = 0;
+    for (let i = 1; i < weeks.length; i++) step = icsGcd(step, weeks[i] - weeks[i - 1]);
+    if (step < 1 || step > 8) step = 1;
+    const have = new Set(dates);
+    const exceptions = [];
+    for (let w = 0; w <= weeks[weeks.length - 1]; w += step) {
+      const d = dateToKey(new Date(first.getFullYear(), first.getMonth(), first.getDate() + w * 7));
+      if (!have.has(d)) exceptions.push(d);
+    }
+    const head = g.find((c) => c.from === dates[0]);
+    const { once, ...rule } = head;
+    rest.push({ ...rule, from: dates[0], until: dates[dates.length - 1], interval: step, exceptions,
+      notes: [...(head.notes || []), `由 ${dates.length} 个单次事件合并为${step > 1 ? `每 ${step} 周` : '每周'}课程` + (exceptions.length ? `（缺 ${exceptions.length} 周记为停课）` : '')] });
+    merged += dates.length - 1;
+  }
+  const seen = new Set();
+  const out = [];
+  for (const c of rest) {
+    const { once, ...rule } = c;
+    const k = [courseSig(rule), rule.from, rule.until, rule.interval].join('#');
+    if (seen.has(k)) {
+      dupes++;
+      continue;
+    }
+    seen.add(k);
+    out.push(rule);
+  }
+  return { courses: out, merged, dupes };
 }
